@@ -20,6 +20,7 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.logging.Level;
 
+import org.adempiere.process.InvoiceGenerateFromShipmentAbstract;
 import org.compiere.apps.IStatusBar;
 import org.compiere.apps.form.GenForm;
 import org.compiere.minigrid.IDColumn;
@@ -39,23 +40,23 @@ import org.compiere.util.Trx;
 
 /**
  * "Generate Invoices from Shipments (manual)" - controller class
- * 
- *	@see <a href="https://github.com/adempiere/adempiere/issues/1657"> 
+ *
+ *	@see <a href="https://github.com/adempiere/adempiere/issues/1657">
  * 		  bug in swing client "Generate Invoices from Shipments (manual)"</a>
  */
 public class InvoiceGenFromShipment extends GenForm {
 	/**	Logger			*/
 	private static CLogger log = CLogger.getCLogger(InvoiceGenFromShipment.class);
-	
+
 	public Object 			m_AD_Org_ID = null;
 	public Object 			m_C_BPartner_ID = null;
-	
+
 	public void dynInit() throws Exception {
 		setTitle("InvGenerateInfo");
 		setReportEngineType( ReportEngine.INVOICE );
 		setAskPrintMsg("PrintInvoices");
 	}
-	
+
 	public void configureMiniTable(IMiniTable miniTable) {
 		//  create Columns
 		miniTable.addColumn("M_InOut_ID");
@@ -75,7 +76,7 @@ public class InvoiceGenFromShipment extends GenForm {
 		//
 		miniTable.autoSize();
 	}
-	
+
 	/**
 	 * Get SQL for Shipments that needs to be invoiced
 	 * @return sql
@@ -94,7 +95,7 @@ public class InvoiceGenFromShipment extends GenForm {
             sql.append(" AND ic.AD_Org_ID=").append(m_AD_Org_ID);
         if (m_C_BPartner_ID != null)
             sql.append(" AND ic.C_BPartner_ID=").append(m_C_BPartner_ID);
-        
+
         // bug - [ 1713337 ] "Generate Invoices (manual)" show locked records.
         /* begin - Exclude locked records; @Trifon */
         int AD_User_ID = Env.getContextAsInt(Env.getCtx(), "#AD_User_ID");
@@ -105,19 +106,19 @@ public class InvoiceGenFromShipment extends GenForm {
             sql.append("M_InOut_ID").append( lockedIDs );//@Trifon - old: C_Order_ID
         }
         /* end - Exclude locked records; @Trifon */
-        
+
         sql.append(" ORDER BY o.Name, bp.Name, MovementDate");
         return sql.toString();
 	}
-	
+
 	/**
 	 *  Query Info
 	 */
 	public void executeQuery(KeyNamePair docTypeKNPair, IMiniTable miniTable) {
 		log.info("");
-		int AD_Client_ID = Env.getAD_Client_ID(Env.getCtx());		
+		int AD_Client_ID = Env.getAD_Client_ID(Env.getCtx());
 		String sql = "";
-        
+
         if (docTypeKNPair.getKey() == MInOut.Table_ID) { //@Trifon old: MOrder.Table_ID
             sql = getInOutSQL();
         }
@@ -154,7 +155,7 @@ public class InvoiceGenFromShipment extends GenForm {
 
 		miniTable.autoSize();
 	}
-	
+
 	/**
 	 *	Save Selection & return selection Query or ""
 	 *  @return where clause like M_InOut_ID IN (...)
@@ -180,43 +181,32 @@ public class InvoiceGenFromShipment extends GenForm {
 		setSelection(results);
 	}
 
-	
+
 	/**************************************************************************
 	 *	Generate Invoices
 	 */
 	public String generate(IStatusBar statusBar, KeyNamePair docTypeKNPair, String docActionSelected) {
+		log.info("docTypeKNPair "+docTypeKNPair.toStringX()+" , docActionSelected="+docActionSelected);
 		String info = "";
 		String trxName = Trx.createTrxName("IVG");
 		Trx trx = Trx.get(trxName, true);	//trx needs to be committed too
-		
+
 		setSelectionActive(false);  //  prevents from being called twice
 		statusBar.setStatusLine(Msg.getMsg(Env.getCtx(), "InvGenerateGen"));
 		statusBar.setStatusDB(String.valueOf(getSelection().size()));
 
 		//	Prepare Process
 		int AD_Process_ID = 0;
-        
-        if (docTypeKNPair.getKey() == MInOut.Table_ID) {
-        	AD_Process_ID = 53345;  
-        	// HARDCODED- AD_Process.Value=C_Invoice_Generate_from_Shipment; class=org.adempiere.process.InvoiceGenerateFromShipment
-/* params:       	
-o DateInvoiced
-m AD_Org_ID
-o M_InOut_ID
-o C_BPartner_ID
-m DocAction
-o ConsolidateDocument
-o AD_OrgTrx_ID
-o IsAddInvoiceReferenceLine
- */
 
+        if (docTypeKNPair.getKey() == MInOut.Table_ID) {
+        	AD_Process_ID = InvoiceGenerateFromShipmentAbstract.getProcessId();
         }
 		MPInstance instance = new MPInstance(Env.getCtx(), AD_Process_ID, 0);
 		if (!instance.save()) {
 			info = Msg.getMsg(Env.getCtx(), "ProcessNoInstance");
 			return info;
 		}
-		
+
 		//insert selection
 		StringBuffer insert = new StringBuffer();
 		insert.append("INSERT INTO T_SELECTION(AD_PINSTANCE_ID, T_SELECTION_ID) ");
@@ -230,7 +220,7 @@ o IsAddInvoiceReferenceLine
 			insert.append(", ");
 			insert.append(selectedId);
 			insert.append(" FROM DUAL ");
-			
+
 			if (counter == 1000) {
 				if ( DB.executeUpdate(insert.toString(), trxName) < 0 ) {
 					String msg = "No Invoices";     //  not translated!
@@ -253,60 +243,54 @@ o IsAddInvoiceReferenceLine
 				return info;
 			}
 		}
-		
+
 		ProcessInfo pi = new ProcessInfo ("", AD_Process_ID);
 		pi.setAD_PInstance_ID (instance.getAD_PInstance_ID());
-		
+
 		//	Add Parameters
 		MPInstancePara para = new MPInstancePara(instance, 10);
-		para.setParameter("Selection", "Y");
-		if (!para.save()) {
-			String msg = "No Selection Parameter added";  //  not translated
-			info = msg;
-			log.log(Level.SEVERE, msg);
-			return info;
-		}
-		
+		pi.setIsSelection(true);
+
 		para = new MPInstancePara(instance, 20);
 		para.setParameter("DocAction", docActionSelected);
 		if (!para.save()) {
-			String msg = "No DocAction Parameter added";  //  not translated
+			String msg = Msg.getMsg(Env.getCtx(), "ParameterMissing") + " DocAction";
 			info = msg;
 			log.log(Level.SEVERE, msg);
 			return info;
 		}
-		
+
 		if(m_AD_Org_ID==null) {
-			String msg = "Missing mandatory AD_Org_ID Parameter";  //  not translated
+			String msg = Msg.getMsg(Env.getCtx(), "ParameterMissing") + " AD_Org_ID";
 			info = msg;
 			log.log(Level.SEVERE, msg);
 			return info;
-		} else { // damit werden aber Re für alle DB erstellt! wenn kein m_C_BPartner_ID
+		} else {
 			para = new MPInstancePara(instance, 30);
-			para.setParameter("AD_Org_ID", (Integer)m_AD_Org_ID); // eigentlich int 
+			para.setParameter("AD_Org_ID", (Integer)m_AD_Org_ID);
 			if (!para.save()) {
-				String msg = "No AD_Org_ID Parameter added";  //  not translated
+				String msg = Msg.getMsg(Env.getCtx(), "ParameterMissing") + " AD_Org_ID";
 				info = msg;
 				log.log(Level.SEVERE, msg);
 				return info;
 			}
 		}
-		
+
 		if(m_C_BPartner_ID!=null) {
 			para = new MPInstancePara(instance, 40);
-			para.setParameter("C_BPartner_ID", (Integer)m_C_BPartner_ID); // eigentlich int 
+			para.setParameter("C_BPartner_ID", (Integer)m_C_BPartner_ID);
 			if (!para.save()) {
-				String msg = "No C_BPartner_ID Parameter added";  //  not translated
+				String msg = Msg.getMsg(Env.getCtx(), "ParameterMissing") + " C_BPartner_ID";
 				info = msg;
 				log.log(Level.SEVERE, msg);
 				return info;
 			}
 		}
-		
+
 		setTrx(trx);
 		setProcessInfo(pi);
-		
+
 		return info;
 	}
-	
+
 }
